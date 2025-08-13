@@ -399,3 +399,10 @@ FodyWeavers.xsd
 
 # JetBrains Rider
 *.sln.iml
+
+#other additions
+SPT_Data/
+types/
+scripts/
+node_modules/
+dev/

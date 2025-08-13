@@ -1,0 +1,9 @@
+{
+  "enabled": true,
+  "verboseLogging": false,
+  "blacklist": [],
+  "excludeFromProprietary": [],
+  "VoidConflicts": [],
+  "secondPass": false,
+  "ManualAdd": []
+}
