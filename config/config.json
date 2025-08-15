@@ -1,9 +1,17 @@
 {
   "enabled": true,
   "verboseLogging": false,
-  "blacklist": [],
-  "excludeFromProprietary": [],
-  "VoidConflicts": [],
   "secondPass": false,
-  "ManualAdd": []
+  "inheritBaseConflicts": true,
+  "inheritCloneConflicts": true,
+  "VoidConflicts": ["686a5a6247c881f613196f91"],
+  "ManualAdd": [],
+  "whitelist": [],
+  "blacklist": [
+    "68448c3ea713d53905743800",
+    "66713838ca123f9df8e7584e",
+    "68448bf2f4f9b64cb687698d",
+    "23878a19adddf4afbbcc0537",
+    "66a47ed0df2ffbca58ebe5ed"
+  ]
 }
