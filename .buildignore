@@ -7,6 +7,7 @@
 /.github
 /.gitignore
 /.gitlab
+/.gitattributes
 /.nvmrc
 /.prettierrc
 /.vscode
@@ -22,3 +23,4 @@
 /scripts
 /SPT_Data
 /logo
+/src/mod_1.1.1_backup.ts

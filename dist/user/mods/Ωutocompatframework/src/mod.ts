@@ -1,95 +1,166 @@
+import path from "node:path";
 import { DependencyContainer } from "tsyringe";
 import { IPostDBLoadMod } from "@spt/models/external/IPostDBLoadMod";
 import { DatabaseServer } from "@spt/servers/DatabaseServer";
 import { ILogger } from "@spt/models/spt/utils/ILogger";
+import { FileSystemSync } from "@spt/utils/FileSystemSync";
 import { BaseClasses } from "@spt/models/enums/BaseClasses";
 import { ItemHelper } from "@spt/helpers/ItemHelper";
-import modConfig from "../config/config.json";
+import { LogTextColor } from "@spt/models/spt/logging/LogTextColor";
+import { jsonc } from "jsonc";
 
-class AutoCompatFramework implements IPostDBLoadMod
+interface Item 
 {
-    public postDBLoad(container: DependencyContainer): void
+    _id: string;
+    _name?: string;
+    _props: {
+        Prefab?: { path: string; rcid: string };
+        Name?: string;
+        Caliber?: string;
+        ammoCaliber?: string;
+        Slots?: Slot[];
+        Chambers?: Slot[];
+        Cartridges?: Slot[];
+        ConflictingItems?: string[];
+    };
+}
+
+interface Slot 
+{
+    _name: string;
+    _props?: { filters?: Array<{ Filter: string[] }> };
+}
+
+interface ModConfig 
+{
+    enabled: boolean;
+    verboseLogging: boolean;
+    secondPass: boolean;
+    blacklist: string[];
+    whitelist: string[];
+    VoidConflicts: string[];
+    inheritBaseConflicts: boolean;
+    inheritCloneConflicts: boolean;
+    ManualAdd: Array<{ attachmentId: string; targetItemId: string }>;
+}
+
+interface PassResult 
+{
+    numAmmoToChambers: number;
+    numAmmoToCartridges: number;
+    numAttachmentsToSlots: number;
+    numBaseConflictsAdded: number;
+    numClonedConflictsAdded: number;
+    numConflictsVoided: number;
+    numManualAdditions: number;
+    modifiedItems: Set<string>;
+}
+
+class AutoCompatFramework implements IPostDBLoadMod 
+{
+    public postDBLoad(container: DependencyContainer): void 
     {
-        if (!modConfig.enabled) 
+        const logger = container.resolve<ILogger>("WinstonLogger");
+        const fileSystem = container.resolve<FileSystemSync>("FileSystemSync");
+
+        let config: ModConfig;
+        try 
         {
+            config = jsonc.parse(fileSystem.read(path.resolve(__dirname, "../config/config.jsonc")));
+        }
+        catch (error) 
+        {
+            logger.error(`AutoCompatFramework: Failed to parse config.jsonc: ${error.message}`);
             return;
         }
 
-        const logger = container.resolve<ILogger>("WinstonLogger");
+        if (!config.enabled) 
+        {
+            logger.info("AutoCompatFramework disabled in config.jsonc");
+            return;
+        }
+
+        if (config.verboseLogging) 
+        {
+            logger.debug(`Loaded config: ${JSON.stringify(config, null, 2)}`);
+        }
+
         const databaseServer = container.resolve<DatabaseServer>("DatabaseServer");
         const itemHelper = container.resolve<ItemHelper>("ItemHelper");
+        const items = databaseServer.getTables().templates.items;
+        const locales = databaseServer.getTables().locales.global["en"];
 
-        // Get duh fuggin tables
-        const tables = databaseServer.getTables();
-        const items = tables.templates.items;
-        const locales = tables.locales.global["en"]; // Probably best to use english locale for reference
+        const weaponBaseClasses = [BaseClasses.WEAPON];
+        const attachmentBaseClasses = [BaseClasses.MOD, BaseClasses.AMMO];
 
-        // Define base classes
-        const weaponBaseClasses = [
-            BaseClasses.WEAPON
-        ];
-        const attachmentBaseClasses = [
-            BaseClasses.MOD
-        ];
-
-        // Process compatibility logic for a single pass
-        const processCompatibility = (passNumber: number, modifiedItems?: Set<string>) => 
+        const logMessage = (
+            level: "info" | "warning" | "debug" | "success",
+            message: string,
+            verboseOnly: boolean = false,
+            color?: LogTextColor
+        ) => 
         {
-            // Compute modded weapons, attachments, and ammo
-            const databaseItems = Object.values(items);
-            const allWeapons = databaseItems.filter(x => weaponBaseClasses.some(baseClass => itemHelper.isOfBaseclass(x._id, baseClass)));
-            const allAttachments = databaseItems.filter(x => attachmentBaseClasses.some(baseClass => itemHelper.isOfBaseclass(x._id, baseClass)));
-            const allAmmo = databaseItems.filter(x => itemHelper.isOfBaseclass(x._id, BaseClasses.AMMO));
+            if (verboseOnly && !config.verboseLogging) return;
+            if (level === "success") 
+            {
+                logger.success(message);
+            }
+            else if (level === "debug") 
+            {
+                logger.debug(message);
+            }
+            else if (level === "warning") 
+            {
+                logger.warning(message);
+            }
+            else if (color) 
+            {
+                logger.logWithColor(message, color);
+            }
+            else 
+            {
+                logger.info(message);
+            }
+        };
 
-            const moddedWeapons = allWeapons.filter(x => 
-            {
-                const prefabPath = x._props?.Prefab?.path || "";
-                return !prefabPath.startsWith("assets/content/");
-            });
-            const moddedAttachments = allAttachments.filter(x => 
-            {
-                const prefabPath = x._props?.Prefab?.path || "";
-                return !prefabPath.startsWith("assets/content/");
-            });
-            const moddedAmmo = allAmmo.filter(x => 
-            {
-                const prefabPath = x._props?.Prefab?.path || "";
-                return !prefabPath.startsWith("assets/content/");
-            });
+        const processCompatibility = (passNumber: number, modifiedItems?: Set<string>): PassResult => 
+        {
+            const allItems = Object.values(items);
+            const allWeapons = allItems.filter(x => weaponBaseClasses.some(base => itemHelper.isOfBaseclass(x._id, base)));
+            const allAttachments = allItems.filter(x => attachmentBaseClasses.some(base => itemHelper.isOfBaseclass(x._id, base)));
+            const allAmmo = allItems.filter(x => itemHelper.isOfBaseclass(x._id, BaseClasses.AMMO));
 
-            // Maps for clone relationships: moddedId => baseId
+            const moddedWeapons = allWeapons.filter(x => !x._props?.Prefab?.path.startsWith("assets/content/"));
+            const moddedAttachments = allAttachments.filter(x => !x._props?.Prefab?.path.startsWith("assets/content/"));
+            const moddedAmmo = allAmmo.filter(x => !x._props?.Prefab?.path.startsWith("assets/content/"));
+
             const itemToBase = new Map<string, string>();
-            // Base to modded clones: baseId => [moddedIds]
             const baseToClones = new Map<string, string[]>();
-            // Caliber to ammo IDs: caliber => [ammoIds] (base and modded)
             const caliberToAmmo = new Map<string, string[]>();
 
-            // Determine base ID by _name matching
-            const findBaseIdByName = (name: string) => 
+            const findBaseId = (item: Item): string | null => 
             {
-                for (const [id, item] of Object.entries(items)) 
+                const name = item._name || item._props?.Name || item._id;
+                for (const [id, dbItem] of Object.entries(items)) 
                 {
-                    if (item._name === name && (item._props?.Prefab?.path || "").startsWith("assets/content/")) 
+                    if ((dbItem._name === name || dbItem._props?.Name === name) && dbItem._props?.Prefab?.path.startsWith("assets/content/")) 
                     {
                         return id;
                     }
                 }
+                logMessage("warning", `Modded item ${item._id} (${locales[`${item._id} Name`] || "Unknown"}): No base item found for clone mapping`, true);
                 return null;
             };
 
-            // Build clone maps for weapons, attachments, ammo
-            const buildCloneMaps = (moddedList: any[]) => 
+            const buildCloneMaps = (moddedList: Item[]) => 
             {
                 for (const moddedItem of moddedList) 
                 {
-                    const baseId = findBaseIdByName(moddedItem._name);
+                    const baseId = findBaseId(moddedItem);
                     if (baseId) 
                     {
                         itemToBase.set(moddedItem._id, baseId);
-                        if (!baseToClones.has(baseId)) 
-                        {
-                            baseToClones.set(baseId, []);
-                        }
+                        if (!baseToClones.has(baseId)) baseToClones.set(baseId, []);
                         baseToClones.get(baseId)!.push(moddedItem._id);
                     }
                 }
@@ -99,76 +170,97 @@ class AutoCompatFramework implements IPostDBLoadMod
             buildCloneMaps(moddedAttachments);
             buildCloneMaps(moddedAmmo);
 
-            // Build caliber to ammo map (base + modded)
-            const allAmmoItems = [...allAmmo, ...moddedAmmo];
-            for (const ammo of allAmmoItems) 
+            for (const ammo of [...allAmmo, ...moddedAmmo]) 
             {
-                const caliber = ammo._props.Caliber || ammo._props.ammoCaliber;
+                const caliber = (ammo._props.Caliber || ammo._props.ammoCaliber || "").toLowerCase();
                 if (caliber) 
                 {
-                    if (!caliberToAmmo.has(caliber)) 
-                    {
-                        caliberToAmmo.set(caliber, []);
-                    }
+                    if (!caliberToAmmo.has(caliber)) caliberToAmmo.set(caliber, []);
                     caliberToAmmo.get(caliber)!.push(ammo._id);
+                }
+                else 
+                {
+                    logMessage("warning", `Ammo ${ammo._id} (${locales[`${ammo._id} Name`] || "Unknown"}): No valid Caliber or ammoCaliber found`, true);
                 }
             }
 
-            // Filter items for second pass if modifiedItems is provided
-            const weaponsToProcess = passNumber === 1 ? [...moddedWeapons, ...allWeapons] : [...moddedWeapons, ...allWeapons].filter(x => modifiedItems!.has(x._id));
-            const slottedItemsToProcess = passNumber === 1 ? [...allWeapons, ...moddedWeapons, ...allAttachments, ...moddedAttachments] : [...allWeapons, ...moddedWeapons, ...allAttachments, ...moddedAttachments].filter(x => modifiedItems!.has(x._id));
+            const weaponsToProcess = passNumber === 1 ? [...moddedWeapons, ...allWeapons] : allWeapons.filter(x => modifiedItems!.has(x._id));
+            const slottedItemsToProcess = passNumber === 1 ? [...allWeapons, ...moddedWeapons, ...allAttachments, ...moddedAttachments] : 
+                [...allWeapons, ...moddedWeapons, ...allAttachments, ...moddedAttachments].filter(x => modifiedItems!.has(x._id));
             const itemsToProcessForConflicts = passNumber === 1 ? [...itemToBase.entries()] : [...itemToBase.entries()].filter(([moddedId]) => modifiedItems!.has(moddedId));
 
-            // Weapon/attachment ID to its slots map: itemId => {slotName: filterIds[]}
             const itemSlots = new Map<string, Map<string, string[]>>();
+            const validateSlot = (item: Item, slot: Slot, type: string): boolean => 
+            {
+                if (!slot._name || typeof slot._name !== "string") 
+                {
+                    logMessage("warning", `Item ${item._id} (${locales[`${item._id} Name`] || "Unknown"}): ${type} slot missing _name or _name is not a string`, true);
+                    return false;
+                }
+                const filter = slot._props?.filters?.[0]?.Filter || [];
+                if (!Array.isArray(filter)) 
+                {
+                    logMessage("warning", `Item ${item._id} (${locales[`${item._id} Name`] || "Unknown"}): ${type} slot ${slot._name} has invalid or missing filters`, true);
+                    return false;
+                }
+                return true;
+            };
 
-            // Build item slots map for weapons and attachments (base + modded)
             for (const item of slottedItemsToProcess) 
             {
                 const slotsMap = new Map<string, string[]>();
-                const slotTypes = ["Slots", "Chambers", "Cartridges"];
-                for (const type of slotTypes) 
+                for (const type of ["Slots", "Chambers", "Cartridges"]) 
                 {
                     const slots = item._props[type] || [];
                     for (const slot of slots) 
                     {
-                        const slotName = slot._name;
-                        const filter = slot._props.filters?.[0]?.Filter || [];
-                        slotsMap.set(slotName, filter);
+                        if (validateSlot(item, slot, type)) 
+                        {
+                            slotsMap.set(slot._name.toLowerCase(), slot._props!.filters![0].Filter);
+                        }
+                    }
+                }
+                if (config.verboseLogging) 
+                {
+                    if (slotsMap.size === 0) 
+                    {
+                        logMessage("debug", `Pass ${passNumber}: No slots found for item ${item._id} (${locales[`${item._id} Name`] || "Unknown"})`, true);
+                        if (itemHelper.isOfBaseclass(item._id, BaseClasses.MAGAZINE)) 
+                        {
+                            logMessage("debug", `Pass ${passNumber}: Cartridges for item ${item._id}: ${JSON.stringify(item._props.Cartridges || [], null, 2)}`, true);
+                        }
+                        else if (itemHelper.isOfBaseclass(item._id, BaseClasses.WEAPON)) 
+                        {
+                            logMessage("debug", `Pass ${passNumber}: Chambers for item ${item._id}: ${JSON.stringify(item._props.Chambers || [], null, 2)}`, true);
+                        }
+                    }
+                    else 
+                    {
+                        logMessage("debug", `Pass ${passNumber}: Slots for item ${item._id} (${locales[`${item._id} Name`] || "Unknown"}): ${Array.from(slotsMap.keys()).join(", ")}`, true);
                     }
                 }
                 itemSlots.set(item._id, slotsMap);
             }
 
-            // Check if a slot is proprietary (only accepts modded IDs or empty)
-            const isProprietarySlot = (filter: string[]) => 
-            {
-                return filter.length === 0 || filter.every(id => 
-                {
-                    const prefabPath = items[id]?._props?.Prefab?.path || "";
-                    return !prefabPath.startsWith("assets/content/");
-                });
-            };
+            const isProprietarySlot = (filter: string[]): boolean => 
+                filter.length === 0 || filter.every(id => !items[id]?._props?.Prefab?.path.startsWith("assets/content/"));
 
-            // Identify proprietary slots and collect candidates for proprietary attachments
-            const proprietaryAttachments = new Set<string>();
+            const proprietaryItems = new Set<string>();
             for (const item of slottedItemsToProcess) 
             {
                 const slotsMap = itemSlots.get(item._id);
                 if (slotsMap) 
                 {
-                    // wow this actually works eslint be weird
                     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-                    for (const [_slotName, filter] of slotsMap.entries()) 
+                    for (const [slotName, filter] of slotsMap) 
                     {
                         if (isProprietarySlot(filter)) 
                         {
                             for (const acceptedId of filter) 
                             {
-                                const prefabPath = items[acceptedId]?._props?.Prefab?.path || "";
-                                if (!prefabPath.startsWith("assets/content/")) 
+                                if (!items[acceptedId]?._props?.Prefab?.path.startsWith("assets/content/")) 
                                 {
-                                    proprietaryAttachments.add(acceptedId);
+                                    proprietaryItems.add(acceptedId);
                                 }
                             }
                         }
@@ -176,43 +268,33 @@ class AutoCompatFramework implements IPostDBLoadMod
                 }
             }
 
-            // Check if these candidates are accepted in any non-proprietary slot
-            const nonProprietaryAttachments = new Set<string>();
+            const nonProprietaryItems = new Set<string>();
             for (const item of slottedItemsToProcess) 
             {
                 const slotsMap = itemSlots.get(item._id);
                 if (slotsMap) 
                 {
                     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-                    for (const [_slotName, filter] of slotsMap.entries()) 
+                    for (const [slotName, filter] of slotsMap) 
                     {
                         if (!isProprietarySlot(filter)) 
                         {
                             for (const acceptedId of filter) 
                             {
-                                nonProprietaryAttachments.add(acceptedId);
+                                nonProprietaryItems.add(acceptedId);
                             }
                         }
                     }
                 }
             }
 
-            // del proprietary attachment candidates not in non-proprietary slots
-            for (const candidate of proprietaryAttachments) 
+            for (const candidate of proprietaryItems) 
             {
-                if (nonProprietaryAttachments.has(candidate)) 
-                {
-                    proprietaryAttachments.delete(candidate);
-                }
+                if (nonProprietaryItems.has(candidate)) proprietaryItems.delete(candidate);
             }
 
-            // Debug log for proprietary attachments
-            if (modConfig.verboseLogging) 
-            {
-                logger.debug(`Proprietary attachments: ${Array.from(proprietaryAttachments).join(", ")}`);
-            }
+            logMessage("debug", `Proprietary items: ${Array.from(proprietaryItems).join(", ")}`, true);
 
-            // Counters for summary logging
             let numAmmoToChambers = 0;
             let numAmmoToCartridges = 0;
             let numAttachmentsToSlots = 0;
@@ -220,75 +302,36 @@ class AutoCompatFramework implements IPostDBLoadMod
             let numClonedConflictsAdded = 0;
             let numConflictsVoided = 0;
             let numManualAdditions = 0;
+            const modifiedItemsThisPass = new Set<string>();
 
-            // Track modified items in this pass
-            const passModifiedItems = new Set<string>();
-
-            // Apply compatibility
-            // Add modded ammo to chambers/cartridges of weapons/mags if caliber matches and not proprietary
             for (const weapon of weaponsToProcess) 
             {
-                if (modConfig.blacklist.includes(weapon._id)) continue;
-                const caliber = weapon._props.ammoCaliber;
+                if (config.blacklist.includes(weapon._id)) continue;
+                const caliber = (weapon._props.ammoCaliber || "").toLowerCase();
                 if (caliber && caliberToAmmo.has(caliber)) 
                 {
-                    const moddedAmmoForCaliber = caliberToAmmo.get(caliber)!.filter(ammoId => 
-                    {
-                        const prefabPath = items[ammoId]?._props?.Prefab?.path || "";
-                        return !prefabPath.startsWith("assets/content/") && !modConfig.blacklist.includes(ammoId) && !proprietaryAttachments.has(ammoId);
-                    });
+                    const moddedAmmoForCaliber = caliberToAmmo.get(caliber)!.filter(
+                        id => !items[id]._props.Prefab?.path.startsWith("assets/content/") && !config.blacklist.includes(id) && !proprietaryItems.has(id)
+                    );
                     const chambers = weapon._props.Chambers || [];
                     for (const chamber of chambers) 
                     {
-                        const filter = chamber._props.filters?.[0]?.Filter || [];
-                        const isProprietary = isProprietarySlot(filter) && !modConfig.whitelist.includes(weapon._id);
-                        if (!isProprietary) 
+                        if (!validateSlot(weapon, chamber, "Chambers")) continue;
+                        const filter = chamber._props!.filters![0].Filter;
+                        if (!isProprietarySlot(filter) || config.whitelist.includes(weapon._id)) 
                         {
                             for (const ammoId of moddedAmmoForCaliber) 
                             {
                                 if (!filter.includes(ammoId)) 
                                 {
                                     filter.push(ammoId);
-                                    passModifiedItems.add(weapon._id);
-                                    if (modConfig.verboseLogging) 
-                                    {
-                                        logger.info(`Pass ${passNumber}: Added modded ammo ${ammoId} (${locales[`${ammoId} Name`] || "Unknown"}) to ${weapon._id} (${locales[`${weapon._id} Name`] || "Unknown"}) chamber`);
-                                    }
+                                    modifiedItemsThisPass.add(weapon._id);
+                                    logMessage("info", `Pass ${passNumber}: Added modded ammo ${ammoId} (${locales[`${ammoId} Name`] || "Unknown"}) to ${weapon._id} (${locales[`${weapon._id} Name`] || "Unknown"}) chamber slot ${chamber._name}`, true);
                                     numAmmoToChambers++;
-                                } 
-                                else if (modConfig.verboseLogging) 
-                                {
-                                    logger.debug(`Pass ${passNumber}: Skipped adding ammo ${ammoId} (${locales[`${ammoId} Name`] || "Unknown"}) to ${weapon._id} (${locales[`${weapon._id} Name`] || "Unknown"}) chamber: already exists`);
                                 }
-                            }
-                        }
-                    }
-                    // Same for cartridges in magazines
-                    if (itemHelper.isOfBaseclass(weapon._id, BaseClasses.MAGAZINE)) 
-                    {
-                        const cartridges = weapon._props.Cartridges || [];
-                        for (const cartridge of cartridges) 
-                        {
-                            const filter = cartridge._props.filters?.[0]?.Filter || [];
-                            const isProprietary = isProprietarySlot(filter) && !modConfig.whitelist.includes(weapon._id);
-                            if (!isProprietary) 
-                            {
-                                for (const ammoId of moddedAmmoForCaliber) 
+                                else 
                                 {
-                                    if (!filter.includes(ammoId)) 
-                                    {
-                                        filter.push(ammoId);
-                                        passModifiedItems.add(weapon._id);
-                                        if (modConfig.verboseLogging) 
-                                        {
-                                            logger.info(`Pass ${passNumber}: Added modded ammo ${ammoId} (${locales[`${ammoId} Name`] || "Unknown"}) to ${weapon._id} (${locales[`${weapon._id} Name`] || "Unknown"}) cartridge`);
-                                        }
-                                        numAmmoToCartridges++;
-                                    } 
-                                    else if (modConfig.verboseLogging) 
-                                    {
-                                        logger.debug(`Pass ${passNumber}: Skipped adding ammo ${ammoId} (${locales[`${ammoId} Name`] || "Unknown"}) to ${weapon._id} (${locales[`${weapon._id} Name`] || "Unknown"}) cartridge: already exists`);
-                                    }
+                                    logMessage("debug", `Pass ${passNumber}: Skipped adding ammo ${ammoId} (${locales[`${ammoId} Name`] || "Unknown"}) to ${weapon._id} (${locales[`${weapon._id} Name`] || "Unknown"}) chamber slot ${chamber._name}: already exists`, true);
                                 }
                             }
                         }
@@ -296,257 +339,301 @@ class AutoCompatFramework implements IPostDBLoadMod
                 }
             }
 
-            // Add modded attachments to slots if the slot accepts the base attachment and not proprietary
-            for (const slottedItem of slottedItemsToProcess) 
+            const magazinesToProcess = passNumber === 1 ? allAttachments.filter(x => itemHelper.isOfBaseclass(x._id, BaseClasses.MAGAZINE)) : 
+                allAttachments.filter(x => itemHelper.isOfBaseclass(x._id, BaseClasses.MAGAZINE) && modifiedItems!.has(x._id));
+            for (const magazine of magazinesToProcess) 
             {
-                if (modConfig.blacklist.includes(slottedItem._id)) continue;
-                const slotsMap = itemSlots.get(slottedItem._id);
+                if (config.blacklist.includes(magazine._id)) continue;
+                const cartridges = magazine._props.Cartridges || [];
+                for (const cartridge of cartridges) 
+                {
+                    if (!validateSlot(magazine, cartridge, "Cartridges")) continue;
+                    const filter = cartridge._props!.filters![0].Filter;
+                    if (isProprietarySlot(filter) && !config.whitelist.includes(magazine._id)) continue;
+                    const magazineCalibers = new Set<string>();
+                    for (const ammoId of filter) 
+                    {
+                        const ammoCaliber = (items[ammoId]?._props.Caliber || "").toLowerCase();
+                        if (ammoCaliber) magazineCalibers.add(ammoCaliber);
+                    }
+                    for (const magCaliber of magazineCalibers) 
+                    {
+                        if (caliberToAmmo.has(magCaliber)) 
+                        {
+                            const moddedAmmoForCaliber = caliberToAmmo.get(magCaliber)!.filter(
+                                id => !items[id]._props.Prefab?.path.startsWith("assets/content/") && !config.blacklist.includes(id) && !proprietaryItems.has(id)
+                            );
+                            for (const ammoId of moddedAmmoForCaliber) 
+                            {
+                                if (!filter.includes(ammoId)) 
+                                {
+                                    filter.push(ammoId);
+                                    modifiedItemsThisPass.add(magazine._id);
+                                    logMessage("info", `Pass ${passNumber}: Added modded ammo ${ammoId} (${locales[`${ammoId} Name`] || "Unknown"}) to ${magazine._id} (${locales[`${magazine._id} Name`] || "Unknown"}) cartridge slot ${cartridge._name}`, true);
+                                    numAmmoToCartridges++;
+                                }
+                                else 
+                                {
+                                    logMessage("debug", `Pass ${passNumber}: Skipped adding ammo ${ammoId} (${locales[`${ammoId} Name`] || "Unknown"}) to ${magazine._id} (${locales[`${magazine._id} Name`] || "Unknown"}) cartridge slot ${cartridge._name}: already exists`, true);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            for (const item of slottedItemsToProcess) 
+            {
+                if (config.blacklist.includes(item._id)) continue;
+                const slotsMap = itemSlots.get(item._id);
                 if (slotsMap) 
                 {
-                    for (const [slotName, filter] of slotsMap.entries()) 
+                    for (const [slotName, filter] of slotsMap) 
                     {
-                        const isProprietary = isProprietarySlot(filter) && !modConfig.whitelist.includes(slottedItem._id);
-                        if (isProprietary) continue;
-                        const newAttachments = [];
-                        for (const acceptedId of [...filter]) 
+                        if (isProprietarySlot(filter) && !config.whitelist.includes(item._id)) continue;
+                        const newAttachments: string[] = [];
+                        for (const acceptedId of filter) 
                         {
                             if (baseToClones.has(acceptedId)) 
                             {
-                                const clones = baseToClones.get(acceptedId)!.filter(cloneId => !modConfig.blacklist.includes(cloneId) && !proprietaryAttachments.has(cloneId));
+                                const clones = baseToClones.get(acceptedId)!.filter(id => !config.blacklist.includes(id) && !proprietaryItems.has(id));
                                 for (const cloneId of clones) 
                                 {
-                                    if (!filter.includes(cloneId)) 
-                                    {
-                                        newAttachments.push(cloneId);
-                                    }
+                                    if (!filter.includes(cloneId)) newAttachments.push(cloneId);
                                 }
                             }
                         }
                         for (const newAttach of newAttachments) 
                         {
                             filter.push(newAttach);
-                            passModifiedItems.add(slottedItem._id);
-                            if (modConfig.verboseLogging) 
-                            {
-                                logger.info(`Pass ${passNumber}: Added modded attachment ${newAttach} (${locales[`${newAttach} Name`] || "Unknown"}) to ${slottedItem._id} (${locales[`${slottedItem._id} Name`] || "Unknown"}) slot ${slotName}`);
-                            }
+                            modifiedItemsThisPass.add(item._id);
+                            logMessage("info", `Pass ${passNumber}: Added modded attachment ${newAttach} (${locales[`${newAttach} Name`] || "Unknown"}) to ${item._id} (${locales[`${item._id} Name`] || "Unknown"}) slot ${slotName}`, true);
                             numAttachmentsToSlots++;
                         }
-                        if (modConfig.verboseLogging && newAttachments.length === 0 && filter.length > 0) 
+                        if (config.verboseLogging && newAttachments.length === 0 && filter.length > 0) 
                         {
-                            logger.debug(`Pass ${passNumber}: No new attachments added to ${slottedItem._id} (${locales[`${slottedItem._id} Name`] || "Unknown"}) slot ${slotName}: all compatible items already included`);
+                            logMessage("debug", `Pass ${passNumber}: No new attachments added to ${item._id} (${locales[`${item._id} Name`] || "Unknown"}) slot ${slotName}: all compatible items already included`, true);
                         }
                     }
                 }
             }
 
-            // Propagate conflicting items from base to clones
             for (const [moddedId, baseId] of itemsToProcessForConflicts) 
             {
-                if (modConfig.blacklist.includes(moddedId)) continue;
+                if (config.blacklist.includes(moddedId)) continue;
                 const baseConflicts = items[baseId]._props.ConflictingItems || [];
                 const moddedConflicts = items[moddedId]._props.ConflictingItems || [];
 
-                // Inherit base conflicts
-                if (modConfig.inheritBaseConflicts)
+                if (config.inheritBaseConflicts) 
                 {
                     for (const baseConflictId of baseConflicts) 
                     {
-                        if (modConfig.VoidConflicts.includes(baseConflictId)) 
+                        if (config.VoidConflicts.includes(baseConflictId)) 
                         {
-                            if (modConfig.verboseLogging) 
-                            {
-                                logger.debug(`Pass ${passNumber}: Skipped adding base conflict ${baseConflictId} (${locales[`${baseConflictId} Name`] || "Unknown"}) to modded item ${moddedId} (${locales[`${moddedId} Name`] || "Unknown"}): in VoidConflicts`);
-                            }
+                            logMessage("debug", `Pass ${passNumber}: Skipped adding base conflict ${baseConflictId} (${locales[`${baseConflictId} Name`] || "Unknown"}) to modded item ${moddedId} (${locales[`${moddedId} Name`] || "Unknown"}): in VoidConflicts`, true);
                             numConflictsVoided++;
                             continue;
                         }
                         if (!moddedConflicts.includes(baseConflictId)) 
                         {
                             moddedConflicts.push(baseConflictId);
-                            passModifiedItems.add(moddedId);
-                            if (modConfig.verboseLogging) 
-                            {
-                                logger.info(`Pass ${passNumber}: Added base conflict ${baseConflictId} (${locales[`${baseConflictId} Name`] || "Unknown"}) to modded item ${moddedId} (${locales[`${moddedId} Name`] || "Unknown"})`);
-                            }
+                            modifiedItemsThisPass.add(moddedId);
+                            logMessage("info", `Pass ${passNumber}: Added base conflict ${baseConflictId} (${locales[`${baseConflictId} Name`] || "Unknown"}) to modded item ${moddedId} (${locales[`${moddedId} Name`] || "Unknown"})`, true);
                             numBaseConflictsAdded++;
-                        } 
-                        else if (modConfig.verboseLogging) 
+                        }
+                        else 
                         {
-                            logger.debug(`Pass ${passNumber}: Skipped adding base conflict ${baseConflictId} (${locales[`${baseConflictId} Name`] || "Unknown"}) to modded item ${moddedId} (${locales[`${moddedId} Name`] || "Unknown"}): already exists`);
+                            logMessage("debug", `Pass ${passNumber}: Skipped adding base conflict ${baseConflictId} (${locales[`${baseConflictId} Name`] || "Unknown"}) to modded item ${moddedId} (${locales[`${moddedId} Name`] || "Unknown"}): already exists`, true);
                         }
                     }
                 }
-                else if (modConfig.verboseLogging)
+                else 
                 {
-                    logger.debug(`Pass ${passNumber}: Skipped base conflict inheritance due to inheritBaseConflicts: false`);
+                    logMessage("debug", `Pass ${passNumber}: Skipped base conflict inheritance due to inheritBaseConflicts: false`, true);
                 }
 
-                // Inherit cloned conflicts
-                if (modConfig.inheritCloneConflicts)
+                if (config.inheritCloneConflicts) 
                 {
                     for (const baseConflictId of baseConflicts) 
                     {
                         if (baseToClones.has(baseConflictId)) 
                         {
-                            const clones = baseToClones.get(baseConflictId)!.filter(cloneId => !modConfig.blacklist.includes(cloneId));
+                            const clones = baseToClones.get(baseConflictId)!.filter(id => !config.blacklist.includes(id));
                             for (const cloneId of clones) 
                             {
-                                if (modConfig.VoidConflicts.includes(cloneId)) 
+                                if (config.VoidConflicts.includes(cloneId)) 
                                 {
-                                    if (modConfig.verboseLogging) 
-                                    {
-                                        logger.debug(`Pass ${passNumber}: Skipped adding cloned conflict ${cloneId} (${locales[`${cloneId} Name`] || "Unknown"}) to modded item ${moddedId} (${locales[`${moddedId} Name`] || "Unknown"}): in VoidConflicts`);
-                                    }
+                                    logMessage("debug", `Pass ${passNumber}: Skipped adding cloned conflict ${cloneId} (${locales[`${cloneId} Name`] || "Unknown"}) to modded item ${moddedId} (${locales[`${moddedId} Name`] || "Unknown"}): in VoidConflicts`, true);
                                     numConflictsVoided++;
                                     continue;
                                 }
                                 if (!moddedConflicts.includes(cloneId)) 
                                 {
                                     moddedConflicts.push(cloneId);
-                                    passModifiedItems.add(moddedId);
-                                    if (modConfig.verboseLogging) 
-                                    {
-                                        logger.info(`Pass ${passNumber}: Added cloned conflict ${cloneId} (${locales[`${cloneId} Name`] || "Unknown"}) to modded item ${moddedId} (${locales[`${moddedId} Name`] || "Unknown"})`);
-                                    }
+                                    modifiedItemsThisPass.add(moddedId);
+                                    logMessage("info", `Pass ${passNumber}: Added cloned conflict ${cloneId} (${locales[`${cloneId} Name`] || "Unknown"}) to modded item ${moddedId} (${locales[`${moddedId} Name`] || "Unknown"})`, true);
                                     numClonedConflictsAdded++;
-                                } 
-                                else if (modConfig.verboseLogging) 
+                                }
+                                else 
                                 {
-                                    logger.debug(`Pass ${passNumber}: Skipped adding cloned conflict ${cloneId} (${locales[`${cloneId} Name`] || "Unknown"}) to modded item ${moddedId} (${locales[`${moddedId} Name`] || "Unknown"}): already exists`);
+                                    logMessage("debug", `Pass ${passNumber}: Skipped adding cloned conflict ${cloneId} (${locales[`${cloneId} Name`] || "Unknown"}) to modded item ${moddedId} (${locales[`${moddedId} Name`] || "Unknown"}): already exists`, true);
                                 }
                             }
                         }
                     }
                 }
-                else if (modConfig.verboseLogging)
+                else 
                 {
-                    logger.debug(`Pass ${passNumber}: Skipped cloned conflict inheritance due to inheritCloneConflicts: false`);
+                    logMessage("debug", `Pass ${passNumber}: Skipped cloned conflict inheritance due to inheritCloneConflicts: false`, true);
                 }
 
                 items[moddedId]._props.ConflictingItems = moddedConflicts;
             }
 
-            // Process ManualAdd entries
-            for (const manual of modConfig.ManualAdd || []) 
+            for (const manual of config.ManualAdd || []) 
             {
                 const { attachmentId, targetItemId } = manual;
                 if (!attachmentId || !targetItemId) 
                 {
-                    logger.warning(`Pass ${passNumber}: Invalid ManualAdd entry: ${JSON.stringify(manual)}`);
+                    logMessage("warning", `Pass ${passNumber}: Invalid ManualAdd entry: ${JSON.stringify(manual)}`);
                     continue;
                 }
                 if (!items[attachmentId]) 
                 {
-                    logger.warning(`Pass ${passNumber}: ManualAdd attachmentId ${attachmentId} not found in database`);
+                    logMessage("warning", `Pass ${passNumber}: ManualAdd attachmentId ${attachmentId} not found in database`);
                     continue;
                 }
                 if (!items[targetItemId]) 
                 {
-                    logger.warning(`Pass ${passNumber}: ManualAdd targetItemId ${targetItemId} not found in database`);
+                    logMessage("warning", `Pass ${passNumber}: ManualAdd targetItemId ${targetItemId} not found in database`);
                     continue;
                 }
-                if (!itemHelper.isOfBaseclass(attachmentId, BaseClasses.MOD)) 
+                if (!itemHelper.isOfBaseclass(attachmentId, BaseClasses.MOD) && !itemHelper.isOfBaseclass(attachmentId, BaseClasses.AMMO)) 
                 {
-                    logger.warning(`Pass ${passNumber}: ManualAdd attachmentId ${attachmentId} (${locales[`${attachmentId} Name`] || "Unknown"}) is not a mod`);
+                    logMessage("warning", `Pass ${passNumber}: ManualAdd attachmentId ${attachmentId} (${locales[`${attachmentId} Name`] || "Unknown"}) is neither a mod nor ammo`);
                     continue;
                 }
-                if (modConfig.blacklist.includes(attachmentId) || modConfig.blacklist.includes(targetItemId)) 
+                if (config.blacklist.includes(attachmentId) || config.blacklist.includes(targetItemId)) 
                 {
-                    if (modConfig.verboseLogging) 
-                    {
-                        logger.debug(`Pass ${passNumber}: Skipped ManualAdd ${attachmentId} (${locales[`${attachmentId} Name`] || "Unknown"}) to ${targetItemId} (${locales[`${targetItemId} Name`] || "Unknown"}): one or both IDs in blacklist`);
-                    }
+                    logMessage("debug", `Pass ${passNumber}: Skipped ManualAdd ${attachmentId} (${locales[`${attachmentId} Name`] || "Unknown"}) to ${targetItemId} (${locales[`${targetItemId} Name`] || "Unknown"}): one or both IDs in blacklist`, true);
                     continue;
                 }
 
-                // Determine mod type (slot name) of attachment
-                let modType: string | null = null;
-                const attachment = items[attachmentId];
-                const attachmentSlots = attachment._props.Slots || [];
-                if (attachmentSlots.length > 0) 
+                let slotName: string | null = null;
+                let targetFilter: string[] | null = null;
+                const targetItem = items[targetItemId];
+
+                if (itemHelper.isOfBaseclass(attachmentId, BaseClasses.AMMO)) 
                 {
-                    modType = attachmentSlots[0]._name; // Use first slot name if available
-                } 
-                else 
-                {
-                    // Fallback to checking parent class or common mod types
-                    const commonModTypes = ["mod_foregrip", "mod_sight", "mod_magazine", "mod_muzzle", "mod_stock", "mod_barrel", "mod_handguard"];
-                    for (const slotType of commonModTypes) 
+                    if (itemHelper.isOfBaseclass(targetItemId, BaseClasses.WEAPON)) 
                     {
-                        if (itemHelper.isOfBaseclass(attachmentId, slotType)) 
+                        const chambers = targetItem._props.Chambers || [];
+                        if (chambers.length > 0 && validateSlot(targetItem, chambers[0], "Chambers")) 
                         {
-                            modType = slotType;
-                            break;
+                            slotName = chambers[0]._name;
+                            targetFilter = chambers[0]._props!.filters![0].Filter;
+                            logMessage("debug", `Pass ${passNumber}: Using Chambers slot ${slotName} for weapon ${targetItemId} (${locales[`${targetItemId} Name`] || "Unknown"})`, true);
+                        }
+                        else 
+                        {
+                            logMessage("warning", `Pass ${passNumber}: Weapon ${targetItemId} (${locales[`${targetItemId} Name`] || "Unknown"}): No valid Chambers defined`);
+                            continue;
+                        }
+                    }
+                    else if (itemHelper.isOfBaseclass(targetItemId, BaseClasses.MAGAZINE)) 
+                    {
+                        const cartridges = targetItem._props.Cartridges || [];
+                        if (cartridges.length > 0 && validateSlot(targetItem, cartridges[0], "Cartridges")) 
+                        {
+                            slotName = cartridges[0]._name;
+                            targetFilter = cartridges[0]._props!.filters![0].Filter;
+                            logMessage("debug", `Pass ${passNumber}: Using Cartridges slot ${slotName} for magazine ${targetItemId} (${locales[`${targetItemId} Name`] || "Unknown"})`, true);
+                        }
+                        else 
+                        {
+                            logMessage("warning", `Pass ${passNumber}: Magazine ${targetItemId} (${locales[`${targetItemId} Name`] || "Unknown"}): No valid Cartridges defined`);
+                            continue;
                         }
                     }
                 }
-                if (!modType) 
+                else 
                 {
-                    logger.warning(`Pass ${passNumber}: Could not determine mod type for attachment ${attachmentId} (${locales[`${attachmentId} Name`] || "Unknown"})`);
-                    continue;
-                }
-
-                // Find matching slot on target item
-                const targetSlots = itemSlots.get(targetItemId) || new Map<string, string[]>();
-                const targetFilter = targetSlots.get(modType);
-                if (!targetFilter) 
-                {
-                    logger.warning(`Pass ${passNumber}: Target item ${targetItemId} (${locales[`${targetItemId} Name`] || "Unknown"}) has no slot for ${modType}`);
-                    continue;
-                }
-
-                // Check proprietary status
-                const isProprietary = isProprietarySlot(targetFilter) && !modConfig.whitelist.includes(targetItemId);
-                if (isProprietary) 
-                {
-                    if (modConfig.verboseLogging) 
+                    const attachment = items[attachmentId];
+                    const commonModTypes = ["mod_foregrip", "mod_sight", "mod_magazine", "mod_muzzle", "mod_stock", "mod_barrel", "mod_handguard"];
+                    for (const modType of commonModTypes) 
                     {
-                        logger.debug(`Pass ${passNumber}: Skipped ManualAdd ${attachmentId} (${locales[`${attachmentId} Name`] || "Unknown"}) to ${targetItemId} (${locales[`${targetItemId} Name`] || "Unknown"}) slot ${modType}: proprietary slot`);
+                        if (itemHelper.isOfBaseclass(attachmentId, modType)) 
+                        {
+                            slotName = modType;
+                            const targetSlots = itemSlots.get(targetItemId) || new Map<string, string[]>();
+                            targetFilter = targetSlots.get(modType.toLowerCase()) || [];
+                            break;
+                        }
                     }
+                    if (!slotName) 
+                    {
+                        const attachmentSlots = attachment._props.Slots || [];
+                        if (attachmentSlots.length > 0 && validateSlot(attachment, attachmentSlots[0], "Slots")) 
+                        {
+                            slotName = attachmentSlots[0]._name;
+                            const targetSlots = itemSlots.get(targetItemId) || new Map<string, string[]>();
+                            targetFilter = targetSlots.get(slotName.toLowerCase()) || [];
+                        }
+                    }
+                }
+
+                if (!slotName || !targetFilter) 
+                {
+                    logMessage("warning", `Pass ${passNumber}: No valid slot found for attachment ${attachmentId} (${locales[`${attachmentId} Name`] || "Unknown"}) on target item ${targetItemId} (${locales[`${targetItemId} Name`] || "Unknown"})`);
                     continue;
                 }
 
-                // Add attachment to slot filter if not already present
+                logMessage("debug", `Pass ${passNumber}: Processing ManualAdd ${attachmentId} (${locales[`${attachmentId} Name`] || "Unknown"}) to ${targetItemId} (${locales[`${targetItemId} Name`] || "Unknown"}) slot ${slotName}, current filter: [${targetFilter.join(", ")}]`, true);
+
                 if (!targetFilter.includes(attachmentId)) 
                 {
                     targetFilter.push(attachmentId);
-                    passModifiedItems.add(targetItemId);
-                    if (modConfig.verboseLogging) 
-                    {
-                        logger.info(`Pass ${passNumber}: Manually added attachment ${attachmentId} (${locales[`${attachmentId} Name`] || "Unknown"}) to ${targetItemId} (${locales[`${targetItemId} Name`] || "Unknown"}) slot ${modType}`);
-                    }
+                    modifiedItemsThisPass.add(targetItemId);
+                    logMessage("info", `Pass ${passNumber}: Manually added attachment ${attachmentId} (${locales[`${attachmentId} Name`] || "Unknown"}) to ${targetItemId} (${locales[`${targetItemId} Name`] || "Unknown"}) slot ${slotName}`, true);
                     numManualAdditions++;
-                } 
-                else if (modConfig.verboseLogging) 
+                }
+                else 
                 {
-                    logger.debug(`Pass ${passNumber}: Skipped ManualAdd ${attachmentId} (${locales[`${attachmentId} Name`] || "Unknown"}) to ${targetItemId} (${locales[`${targetItemId} Name`] || "Unknown"}) slot ${modType}: already exists`);
+                    logMessage("debug", `Pass ${passNumber}: Skipped ManualAdd ${attachmentId} (${locales[`${attachmentId} Name`] || "Unknown"}) to ${targetItemId} (${locales[`${targetItemId} Name`] || "Unknown"}) slot ${slotName}: already included in filter [${targetFilter.join(", ")}]`, true);
                 }
             }
 
-            // Log summaries for this pass if not verbose
-            if (!modConfig.verboseLogging) 
+            if (!config.verboseLogging) 
             {
-                logger.info(`AutoCompatFramework Pass ${passNumber} Summary:`);
-                logger.info(`- Added ${numAmmoToChambers} ammo to chambers`);
-                logger.info(`- Added ${numAmmoToCartridges} ammo to cartridges`);
-                logger.info(`- Added ${numAttachmentsToSlots} attachments to slots`);
-                logger.info(`- Added ${numBaseConflictsAdded} base conflicts`);
-                logger.info(`- Added ${numClonedConflictsAdded} cloned conflicts`);
-                logger.info(`- Voided ${numConflictsVoided} conflicts`);
-                logger.info(`- Added ${numManualAdditions} manual additions`);
+                logMessage("info", `AutoCompatFramework Pass ${passNumber} Summary:`);
+                logMessage("info", `- Added ${numAmmoToChambers} ammo to chambers`);
+                logMessage("info", `- Added ${numAmmoToCartridges} ammo to cartridges`);
+                logMessage("info", `- Added ${numAttachmentsToSlots} attachments to slots`);
+                logMessage("info", `- Added ${numBaseConflictsAdded} base conflicts`);
+                logMessage("info", `- Added ${numClonedConflictsAdded} cloned conflicts`);
+                logMessage("info", `- Voided ${numConflictsVoided} conflicts`);
+                logMessage("info", `- Added ${numManualAdditions} manual additions`);
             }
 
-            // Log if no changes were made in this pass
-            if (modConfig.verboseLogging && numAmmoToChambers === 0 && numAmmoToCartridges === 0 && numAttachmentsToSlots === 0 && numBaseConflictsAdded === 0 && numClonedConflictsAdded === 0 && numConflictsVoided === 0 && numManualAdditions === 0) 
+            if (config.verboseLogging && 
+                numAmmoToChambers === 0 && numAmmoToCartridges === 0 && numAttachmentsToSlots === 0 &&
+                numBaseConflictsAdded === 0 && numClonedConflictsAdded === 0 && numConflictsVoided === 0 && numManualAdditions === 0) 
             {
-                logger.debug(`Pass ${passNumber}: No new compatibilities, conflicts, or manual additions added.`);
+                logMessage("debug", `Pass ${passNumber}: No new compatibilities, conflicts, or manual additions added.`, true);
             }
 
-            return { numAmmoToChambers, numAmmoToCartridges, numAttachmentsToSlots, numBaseConflictsAdded, numClonedConflictsAdded, numConflictsVoided, numManualAdditions, passModifiedItems };
+            return {
+                numAmmoToChambers,
+                numAmmoToCartridges,
+                numAttachmentsToSlots,
+                numBaseConflictsAdded,
+                numClonedConflictsAdded,
+                numConflictsVoided,
+                numManualAdditions,
+                modifiedItems: modifiedItemsThisPass
+            };
         };
 
-        // First pass
         const firstPassResult = processCompatibility(1);
         let totalAmmoToChambers = firstPassResult.numAmmoToChambers;
         let totalAmmoToCartridges = firstPassResult.numAmmoToCartridges;
@@ -555,15 +642,11 @@ class AutoCompatFramework implements IPostDBLoadMod
         let totalClonedConflictsAdded = firstPassResult.numClonedConflictsAdded;
         let totalConflictsVoided = firstPassResult.numConflictsVoided;
         let totalManualAdditions = firstPassResult.numManualAdditions;
-        const modifiedItems = firstPassResult.passModifiedItems;
+        const modifiedItems = firstPassResult.modifiedItems;
 
-        // Second pass if enabled and modifications were made
-        if (modConfig.secondPass && modifiedItems.size > 0) 
+        if (config.secondPass && modifiedItems.size > 0) 
         {
-            if (modConfig.verboseLogging) 
-            {
-                logger.debug(`Pass 2: Processing ${modifiedItems.size} modified items`);
-            }
+            logMessage("debug", `Pass 2: Processing ${modifiedItems.size} modified items`, true);
             const secondPassResult = processCompatibility(2, modifiedItems);
             totalAmmoToChambers += secondPassResult.numAmmoToChambers;
             totalAmmoToCartridges += secondPassResult.numAmmoToCartridges;
@@ -572,26 +655,61 @@ class AutoCompatFramework implements IPostDBLoadMod
             totalClonedConflictsAdded += secondPassResult.numClonedConflictsAdded;
             totalConflictsVoided += secondPassResult.numConflictsVoided;
             totalManualAdditions += secondPassResult.numManualAdditions;
-        } 
-        else if (modConfig.verboseLogging) 
+        }
+        else if (config.verboseLogging) 
         {
-            logger.debug(`Pass 2: Skipped - secondPass: ${modConfig.secondPass}, modifiedItems: ${modifiedItems.size}`);
+            logMessage("debug", `Pass 2: Skipped - secondPass: ${config.secondPass}, modifiedItems: ${modifiedItems.size}`, true);
         }
 
-        // Log total summary if second pass was run and not verbose
-        if (modConfig.secondPass && !modConfig.verboseLogging) 
+        if (config.secondPass && !config.verboseLogging) 
         {
-            logger.info("AutoCompatFramework Total Summary:");
-            logger.info(`- Added ${totalAmmoToChambers} ammo to chambers`);
-            logger.info(`- Added ${totalAmmoToCartridges} ammo to cartridges`);
-            logger.info(`- Added ${totalAttachmentsToSlots} attachments to slots`);
-            logger.info(`- Added ${totalBaseConflictsAdded} base conflicts`);
-            logger.info(`- Added ${totalClonedConflictsAdded} cloned conflicts`);
-            logger.info(`- Voided ${totalConflictsVoided} conflicts`);
-            logger.info(`- Added ${totalManualAdditions} manual additions`);
+            logMessage("info", "AutoCompatFramework Total Summary:");
+            logMessage("info", `- Added ${totalAmmoToChambers} ammo to chambers`);
+            logMessage("info", `- Added ${totalAmmoToCartridges} ammo to cartridges`);
+            logMessage("info", `- Added ${totalAttachmentsToSlots} attachments to slots`);
+            logMessage("info", `- Added ${totalBaseConflictsAdded} base conflicts`);
+            logMessage("info", `- Added ${totalClonedConflictsAdded} cloned conflicts`);
+            logMessage("info", `- Voided ${totalConflictsVoided} conflicts`);
+            logMessage("info", `- Added ${totalManualAdditions} manual additions`);
         }
 
-        logger.success("AutoCompatFramework: Mod Cross-compatibility applied successfully.");
+        logMessage("success", "AutoCompatFramework: Mod Cross-compatibility applied successfully.");
+
+        const jokeMessages = [
+            { message: "Square peg go in square hole. Round peg go in round hole.", textColor: LogTextColor.CYAN },
+            { message: "Is it in yet?", textColor: LogTextColor.CYAN },
+            { message: "You guys tryin to put the thing on the thing?... Cool, cool, cool...", textColor: LogTextColor.CYAN },
+            { message: "If it fits, it sits.", textColor: LogTextColor.CYAN },
+            { message: "If it fits, it ships.", textColor: LogTextColor.CYAN },
+            { message: "If it fits, install it.", textColor: LogTextColor.MAGENTA },
+            { message: "Wait for applause...", textColor: LogTextColor.CYAN },
+            { message: "Now, will it blend?...", textColor: LogTextColor.CYAN },
+            { message: "Measure twice, cut once.", textColor: LogTextColor.CYAN },
+            { message: "Too many options? Start with a corner piece.", textColor: LogTextColor.CYAN },
+            { message: "Keep your options open.", textColor: LogTextColor.CYAN },
+            { message: "Be careful, it goes off for, like, NO reason...", textColor: LogTextColor.CYAN },
+            { message: "Some motherfuckers are always trying to ice skate uphill...", textColor: LogTextColor.CYAN },
+            { message: "PC Load Letter? What the fuck does that mean?...", textColor: LogTextColor.CYAN },
+            { message: "If you build it, they will come.", textColor: LogTextColor.CYAN },
+            { message: "The whole is greater than the sum of its parts.", textColor: LogTextColor.CYAN },
+            { message: "Now we have options - and that's terrifying.", textColor: LogTextColor.CYAN },
+            { message: "An escalator can never break: it can only become stairs.", textColor: LogTextColor.CYAN },
+            { message: "Don't ever take a fence down until you know why it was put up.", textColor: LogTextColor.CYAN },
+            { message: "Perfect is the enemy of good. - Voltaire", textColor: LogTextColor.MAGENTA },
+            { message: "I just don't see how having somebody piss on my face is going to help me sell Lou Ferrigno's house...", textColor: LogTextColor.CYAN },
+            { message: "When you have eliminated the impossible, whatever remains, however improbable, must be the truth.", textColor: LogTextColor.MAGENTA },
+            { message: "Accepting oneself does not preclude an attempt to become better. - Flannery O'Connor", textColor: LogTextColor.CYAN },
+            { message: "Do I contradict myself? Very well then I contradict myself, (I am large, I contain multitudes.)", textColor: LogTextColor.CYAN },
+            { message: "Why should a man walk around with a pistol and let himself be insulted? It's mighty strange...", textColor: LogTextColor.CYAN },
+            { message: "SPT Modders were so preoccupied with whether or not they could, they didn't stop to think if they should.", textColor: LogTextColor.MAGENTA },
+            { message: "Now the only limit is your imagination, and my competence", textColor: LogTextColor.MAGENTA },
+            { message: "Good design fits - first in logic, then in form. This mod has neither.", textColor: LogTextColor.CYAN },
+            { message: "Whole-ass one thing or don’t bother.", textColor: LogTextColor.MAGENTA },
+            { message: "Well then, get your shit together. Get it all together. And put it in a backpack. All your shit. So it’s together.", textColor: LogTextColor.MAGENTA }
+        ];
+        const randomIndex = Math.floor(Math.random() * jokeMessages.length);
+        const selectedMessage = jokeMessages[randomIndex];
+        logger.logWithColor(selectedMessage.message, selectedMessage.textColor);
     }
 }
 

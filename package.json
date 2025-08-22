@@ -1,6 +1,6 @@
 {
     "name": "AutoCompat Framework",
-    "version": "1.1.1",
+    "version": "1.2.0",
     "sptVersion": "~3.11",
     "loadBefore": [],
     "loadAfter": [],
@@ -26,5 +26,8 @@
     },
     "author": "Solid-Rhoads",
     "contributors": [],
-    "license": "MIT"
+    "license": "MIT",
+    "dependencies": {
+        "jsonc-parser": "^3.3.1"
+    }
 }
