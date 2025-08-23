@@ -63,6 +63,7 @@ class AutoCompatFramework implements IPostDBLoadMod
         const logger = container.resolve<ILogger>("WinstonLogger");
         const fileSystem = container.resolve<FileSystemSync>("FileSystemSync");
 
+        // Parse config
         let config: ModConfig;
         try 
         {
@@ -98,7 +99,7 @@ class AutoCompatFramework implements IPostDBLoadMod
             message: string,
             verboseOnly: boolean = false,
             color?: LogTextColor
-        ) => 
+        ): void => 
         {
             if (verboseOnly && !config.verboseLogging) return;
             if (level === "success") 
@@ -495,22 +496,22 @@ class AutoCompatFramework implements IPostDBLoadMod
                 const { attachmentId, targetItemId } = manual;
                 if (!attachmentId || !targetItemId) 
                 {
-                    logMessage("warning", `Pass ${passNumber}: Invalid ManualAdd entry: ${JSON.stringify(manual)}`);
+                    logMessage("warning", `Pass ${passNumber}: Invalid ManualAdd entry: ${JSON.stringify(manual)}`, true);
                     continue;
                 }
                 if (!items[attachmentId]) 
                 {
-                    logMessage("warning", `Pass ${passNumber}: ManualAdd attachmentId ${attachmentId} not found in database`);
+                    logMessage("warning", `Pass ${passNumber}: ManualAdd attachmentId ${attachmentId} not found in database`, true);
                     continue;
                 }
                 if (!items[targetItemId]) 
                 {
-                    logMessage("warning", `Pass ${passNumber}: ManualAdd targetItemId ${targetItemId} not found in database`);
+                    logMessage("warning", `Pass ${passNumber}: ManualAdd targetItemId ${targetItemId} not found in database`, true);
                     continue;
                 }
                 if (!itemHelper.isOfBaseclass(attachmentId, BaseClasses.MOD) && !itemHelper.isOfBaseclass(attachmentId, BaseClasses.AMMO)) 
                 {
-                    logMessage("warning", `Pass ${passNumber}: ManualAdd attachmentId ${attachmentId} (${locales[`${attachmentId} Name`] || "Unknown"}) is neither a mod nor ammo`);
+                    logMessage("warning", `Pass ${passNumber}: ManualAdd attachmentId ${attachmentId} (${locales[`${attachmentId} Name`] || "Unknown"}) is neither a mod nor ammo`, true);
                     continue;
                 }
                 if (config.blacklist.includes(attachmentId) || config.blacklist.includes(targetItemId)) 
@@ -536,7 +537,7 @@ class AutoCompatFramework implements IPostDBLoadMod
                         }
                         else 
                         {
-                            logMessage("warning", `Pass ${passNumber}: Weapon ${targetItemId} (${locales[`${targetItemId} Name`] || "Unknown"}): No valid Chambers defined`);
+                            logMessage("warning", `Pass ${passNumber}: Weapon ${targetItemId} (${locales[`${targetItemId} Name`] || "Unknown"}): No valid Chambers defined`, true);
                             continue;
                         }
                     }
@@ -551,7 +552,7 @@ class AutoCompatFramework implements IPostDBLoadMod
                         }
                         else 
                         {
-                            logMessage("warning", `Pass ${passNumber}: Magazine ${targetItemId} (${locales[`${targetItemId} Name`] || "Unknown"}): No valid Cartridges defined`);
+                            logMessage("warning", `Pass ${passNumber}: Magazine ${targetItemId} (${locales[`${targetItemId} Name`] || "Unknown"}): No valid Cartridges defined`, true);
                             continue;
                         }
                     }
@@ -584,7 +585,7 @@ class AutoCompatFramework implements IPostDBLoadMod
 
                 if (!slotName || !targetFilter) 
                 {
-                    logMessage("warning", `Pass ${passNumber}: No valid slot found for attachment ${attachmentId} (${locales[`${attachmentId} Name`] || "Unknown"}) on target item ${targetItemId} (${locales[`${targetItemId} Name`] || "Unknown"})`);
+                    logMessage("warning", `Pass ${passNumber}: No valid slot found for attachment ${attachmentId} (${locales[`${attachmentId} Name`] || "Unknown"}) on target item ${targetItemId} (${locales[`${targetItemId} Name`] || "Unknown"})`, true);
                     continue;
                 }
 
@@ -698,7 +699,7 @@ class AutoCompatFramework implements IPostDBLoadMod
             { message: "Perfect is the enemy of good. - Voltaire", textColor: LogTextColor.MAGENTA },
             { message: "I just don't see how having somebody piss on my face is going to help me sell Lou Ferrigno's house...", textColor: LogTextColor.CYAN },
             { message: "When you have eliminated the impossible, whatever remains, however improbable, must be the truth.", textColor: LogTextColor.MAGENTA },
-            { message: "Accepting oneself does not preclude an attempt to become better. - Flannery O'Connor", textColor: LogTextColor.CYAN },
+            { message: "Accepting oneself does not preclude an attempt to become better.", textColor: LogTextColor.CYAN },
             { message: "Do I contradict myself? Very well then I contradict myself, (I am large, I contain multitudes.)", textColor: LogTextColor.CYAN },
             { message: "Why should a man walk around with a pistol and let himself be insulted? It's mighty strange...", textColor: LogTextColor.CYAN },
             { message: "SPT Modders were so preoccupied with whether or not they could, they didn't stop to think if they should.", textColor: LogTextColor.MAGENTA },
