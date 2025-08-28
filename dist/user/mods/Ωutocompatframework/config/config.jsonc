@@ -9,8 +9,10 @@
   // Enables detailed logging for debugging. Very verbose, only enable if you need to troubleshoot an issue.
   "verboseLogging": false,
   
-  // Enables a second pass to process items modified in the first pass, could reveal new compats but rarely rarely does.
-  "secondPass": false,
+  // Enables or disables fallback file parsing to find missing IDs. Can create new compatibilities, but can take a long time on large mod lists.
+  // Recommended for Moxopixel TGC and a few other mods but otherwise not needed.
+  "modFileParsing": true,
+
   // -----------------------------------------------------------------
 
 
@@ -23,7 +25,7 @@
   "inheritBaseConflicts": false,
   
   // If true, modded items inherit conflicts from other modded clones. Potential for curse reduction in heavy mod lists. Disable if you notice lots of unexpected conflicts (cannot install both (item 1) and (item 2) at the same time).
-  "inheritCloneConflicts": true,
+  "inheritCloneConflicts": false,
   
   // List of item IDs to exclude from all new conflict inheritance (normal conflicts still remain).
   "VoidConflicts": [
@@ -39,44 +41,10 @@
 
   // List of manual additions to force compatibility between specific weapons/attachments/ammo and target items.
   // For when the algorithm misses something due to cloning quirks, mismatched or incomplete data.
-  // Each entry specifies an attachmentId (e.g., ammo or mod) to add to the targetItemId's appropriate filter.
-  "ManualAdd": [
-    // Choccy WA2000 and magazines can use WTT .300 WinMag ammo types (both choccy and WTT add 300 winmag, but the caliber is named differently)
-    {"attachmentId": "684e2ded3b64f7187cf14fae", "targetItemId": "6787c587daf18caae2c47bda"}, // WTT ammo to Choccy WA2000 Chamber
-    {"attachmentId": "684e2de88bb7e9f52bfab35c", "targetItemId": "6787c587daf18caae2c47bda"},
-    {"attachmentId": "684e2de4c90977ea0b7b83fe", "targetItemId": "6787c587daf18caae2c47bda"},
-    {"attachmentId": "684e2ded3b64f7187cf14fae", "targetItemId": "6787c58e17cf7aa9a28cfaca"}, // WTT ammo to Choccy W 10-round mag
-    {"attachmentId": "684e2de88bb7e9f52bfab35c", "targetItemId": "6787c58e17cf7aa9a28cfaca"},
-    {"attachmentId": "684e2de4c90977ea0b7b83fe", "targetItemId": "6787c58e17cf7aa9a28cfaca"},
-    {"attachmentId": "684e2ded3b64f7187cf14fae", "targetItemId": "6794f4e3a671046f746df8f5"}, // WTT ammo to Choccy W 20-round mag
-    {"attachmentId": "684e2de88bb7e9f52bfab35c", "targetItemId": "6794f4e3a671046f746df8f5"},
-    {"attachmentId": "684e2de4c90977ea0b7b83fe", "targetItemId": "6794f4e3a671046f746df8f5"},
-    {"attachmentId": "684e2ded3b64f7187cf14fae", "targetItemId": "6794f4eaa532303999ea952c"}, // WTT ammo to Choccy W 30-round mag
-    {"attachmentId": "684e2de88bb7e9f52bfab35c", "targetItemId": "6794f4eaa532303999ea952c"},
-    {"attachmentId": "684e2de4c90977ea0b7b83fe", "targetItemId": "6794f4eaa532303999ea952c"},
-    // WTT MSR and magazines can use Choccy .300 WinMag ammo types
-    {"attachmentId": "6787af9b370beb59900b84da", "targetItemId": "684e32eaec9f5eb3cacc7ca7"}, // Choccy ammo to WTT MSR Chamber
-    {"attachmentId": "6798b890fa41a7cc25a09157", "targetItemId": "684e32eaec9f5eb3cacc7ca7"},
-    {"attachmentId": "6798b895f3d82ede6df718d2", "targetItemId": "684e32eaec9f5eb3cacc7ca7"},
-    {"attachmentId": "6798b89bdf2a24b0c315daac", "targetItemId": "684e32eaec9f5eb3cacc7ca7"},
-    {"attachmentId": "6787af9b370beb59900b84da", "targetItemId": "684e3e64b3bb65a5ffdfd7ea"}, // Choccy ammo to WTT MSR 10-round mag
-    {"attachmentId": "6798b890fa41a7cc25a09157", "targetItemId": "684e3e64b3bb65a5ffdfd7ea"},
-    {"attachmentId": "6798b895f3d82ede6df718d2", "targetItemId": "684e3e64b3bb65a5ffdfd7ea"},
-    {"attachmentId": "6798b89bdf2a24b0c315daac", "targetItemId": "684e3e64b3bb65a5ffdfd7ea"},
-    {"attachmentId": "6787af9b370beb59900b84da", "targetItemId": "684e3e6ef0a716d13d331aae"}, // Choccy ammo to WTT MSR 20-round mag
-    {"attachmentId": "6798b890fa41a7cc25a09157", "targetItemId": "684e3e6ef0a716d13d331aae"},
-    {"attachmentId": "6798b895f3d82ede6df718d2", "targetItemId": "684e3e6ef0a716d13d331aae"},
-    {"attachmentId": "6798b89bdf2a24b0c315daac", "targetItemId": "684e3e6ef0a716d13d331aae"},
-    // WTT 300 WinMag AXMC and magazines can use Choccy .300 WinMag ammo types
-    {"attachmentId": "6787af9b370beb59900b84da", "targetItemId": "68a3836826dffa87b5767c04"}, // Choccy ammo to WTT 300 AXMC Chamber
-    {"attachmentId": "6798b890fa41a7cc25a09157", "targetItemId": "68a3836826dffa87b5767c04"},
-    {"attachmentId": "6798b895f3d82ede6df718d2", "targetItemId": "68a3836826dffa87b5767c04"},
-    {"attachmentId": "6798b89bdf2a24b0c315daac", "targetItemId": "68a3836826dffa87b5767c04"},
-    {"attachmentId": "6787af9b370beb59900b84da", "targetItemId": "68a387672d70af2b1e359602"}, // Choccy ammo to WTT 300 AXMC Mag
-    {"attachmentId": "6798b890fa41a7cc25a09157", "targetItemId": "68a387672d70af2b1e359602"},
-    {"attachmentId": "6798b895f3d82ede6df718d2", "targetItemId": "68a387672d70af2b1e359602"},
-    {"attachmentId": "6798b89bdf2a24b0c315daac", "targetItemId": "68a387672d70af2b1e359602"}
-  ],
+  // Each entry specifies attachmentId(s) (e.g., ammo or mod) to add to the targetItemId(s) appropriate filter(s).
+  // Each value for for both attachmentId and targetItemId accepts a single ID string or array. Enclose strings in quotes and enclose arrays in brackets. Enclose the entire entry in curly braces, separate multiple entries with commas.
+  // Example: "ManualAdd": [{ "attachmentIds": "672e2e75ea372126f4fcb874", "targetItemIds": ["6761b213607f9a6f79017d42", "676b5088bc973cdc82247b3f", "676c3d1dcf722dad840e520b"] }, { "attachmentIds": ["672e2e757efbbef26ff61046", "672e2e7546454a975e0b7a3b"], "targetItemIds": "6761b213607f9a6f79017d42" }]
+  "ManualAdd": [],
 // -----------------------------------------------------------------
 
 
@@ -97,16 +65,32 @@
     "684374be10b9487f8bd998cc", // WTT UCP Comp
     "66a47ed0df2ffbca58ebe5ed", // WTT IWI Tavor X95 front sight
     "66a47ed3f97061a20b99f188", // WTT IWI Tavor X95 rear sight
+    "67a01e4ea2b82626b73d10a5", // WTT ACR PMAG 762
+
     "68448c3ea713d53905743800", // EoT AR-15 A1/A2 Gooseneck Carryhandle mount
     "66713838ca123f9df8e7584e", // EoT Precision Reflex Carry Handle Mount "Gooseneck"
     "68448bf2f4f9b64cb687698d", // EoT AR-15 A1/A2 Carryhandle Piccatinny mount
     "685097dbb9aa83c9e35c5027", // EoT Glock MOS slide cap
     "684b271ce72d12cf50b2a0dd", // EoT TTI Pit Viper rear sight
+    "68340d1d407f065e9c181c4b", // EoT AR-15 7.62x39 mag
+    "683410a82481761ba836b719", // EoT AR-15 7.62x39 mag FDE
+    "683427e8e0e4e228b35746b2", // EoT AR-15 7.62x39 mag banana
+    "685986e77e1518fb3729a164", // EoT AR-15J .366 TKM 20 inch barrel
+    "685986ffb813072ae5e3a91c", // EoT AR-15J .366 TKM 16 inch barrel
+
     "8af8534244b4e4189d53bec2", // Epic's Magpul M-Lok bipod
     "690458c8c8f726648b11ac19", // Epic's Harris 1A2-BRM Bipod with picatinny mount
     "23878a19adddf4afbbcc0537", // Epic's Carry Handle Tactical Picatinny Riser mount
-    "04D04D10AB10AB4D00000000" // Massivesoft Longbow Rear Sight (why is this id so weird? It makes me uncomfortable...)
+
+    "04D04D10AB10AB4D00000000", // Massivesoft Longbow Rear Sight (why is this id so weird? It makes me uncomfortable...)
     
-    
+    // Shrapnels (EFT is cursed...)
+    "5943d9c186f7745a13413ac9", // Shrapnel
+    "5996f6cb86f774678763a6ca", //RGD-5 Shrapnel
+    "5996f6d686f77467977ba6cc", // Mon50 Shrapnel
+    "63b35f281745dd52341e5da7", // F1 Shrapnel
+    "5996f6fc86f7745e585b4de3", // M67 Shrapnel
+    "67654a6759116d347b0bfb86", // V40 Shrapnel
+    "66ec2aa6daf127599c0c31f1" // O-832DU Shrapnel
   ]
 }
