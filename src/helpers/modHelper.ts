@@ -52,7 +52,7 @@ export const loadCache = (
         if (config.modFileParsing) 
         {
             logMessage("success", `Cache found: Loaded ${baseIdCache.size} entries from cache`, false, config.verboseLogging);
-            logMessage("warning", "Delete cache folder from user/mods/Ωutocompatframework/src if you update or add new weapon, attachment, or ammo mods to allow the cache to regenerate.", false, config.verboseLogging);
+            logMessage("warning", "Delete cache folder from user/mods/autocompatframework/src if you update or add new weapon, attachment, or ammo mods to allow the cache to regenerate.", false, config.verboseLogging);
         }
         return true;
     }
@@ -72,7 +72,7 @@ export const saveCache = (
     config: ModConfig,
     cacheLoaded: boolean,
     logMessage: (level: "info" | "warning" | "debug" | "success", message: string, verboseOnly?: boolean, verboseLogging?: boolean, color?: LogTextColor | string) => void
-    // eslint-disable-next-line @typescript-eslint/explicit-module-boundary-types
+// eslint-disable-next-line @typescript-eslint/explicit-module-boundary-types
 ) => 
 {
     if (cacheLoaded) 
@@ -153,6 +153,23 @@ export const findBaseIdFromJson = (
     }
     visited.add(itemId);
 
+    const findEntry = (data: any): any | null => 
+    {
+        if (typeof data === "object" && data !== null) 
+        {
+            if (data._id === itemId) 
+            {
+                return data;
+            }
+            for (const value of Object.values(data)) 
+            {
+                const result = findEntry(value);
+                if (result) return result;
+            }
+        }
+        return null;
+    };
+
     for (const modName of mods) 
     {
         const modPath = preSptModLoader.getModPath(modName);
@@ -174,18 +191,33 @@ export const findBaseIdFromJson = (
                     continue;
                 }
 
+                let entry: any = null;
+                let source: string = "none";
+
+                // Try direct lookup for flat JSON structures
                 if (typeof data === "object" && data !== null && data[itemId]) 
                 {
-                    const entry = data[itemId];
-                    const cloneId = entry.clone || entry.itemTplToClone;
+                    entry = data[itemId];
+                    source = "direct";
+                }
+                // Fall back to recursive search for nested JSON
+                else 
+                {
+                    entry = findEntry(data);
+                    if (entry) source = "recursive";
+                }
+
+                if (entry) 
+                {
+                    const cloneId = entry.clone || entry.itemTplToClone || entry._orig || entry._original;
                     if (config.verboseLogging) 
                     {
-                        logMessage("debug", `Found ${itemId} in ${filePath}, clone: ${cloneId || "none"}`, true, config.verboseLogging);
+                        logMessage("debug", `Found ${itemId} in ${filePath} via ${source} lookup, clone: ${cloneId || "none"}`, true, config.verboseLogging);
                     }
 
                     if (!cloneId) 
                     {
-                        logMessage("warning", `No clone or itemTplToClone for ${itemId} in ${filePath}`, true, config.verboseLogging);
+                        logMessage("warning", `No clone, itemTplToClone, _orig, or _original for ${itemId} in ${filePath}`, true, config.verboseLogging);
                         return null;
                     }
 
@@ -195,7 +227,7 @@ export const findBaseIdFromJson = (
                         baseIdCache.set(itemId, cloneId);
                         if (config.verboseLogging) 
                         {
-                            logMessage("debug", `Resolved ${itemId} to vanilla base ${cloneId} in ${filePath}`, true, config.verboseLogging);
+                            logMessage("debug", `Resolved ${itemId} to vanilla base ${cloneId} in ${filePath} via ${source} lookup`, true, config.verboseLogging);
                         }
                         return cloneId;
                     } 
@@ -207,7 +239,7 @@ export const findBaseIdFromJson = (
                             baseIdCache.set(itemId, baseId);
                             if (config.verboseLogging) 
                             {
-                                logMessage("debug", `Resolved ${itemId} to base ${baseId} via chain`, true, config.verboseLogging);
+                                logMessage("debug", `Resolved ${itemId} to base ${baseId} via chain in ${filePath} from ${source} lookup`, true, config.verboseLogging);
                             }
                             return baseId;
                         }

@@ -15,6 +15,7 @@ import { Item, Slot, ModConfig, PassResult } from "./references/types";
 import { normalizeCalibers } from "./helpers/choccyPatch";
 import { handleConflicts } from "./helpers/conflictHelper";
 import { loadCache, saveCache, findBaseIdFromJson } from "./helpers/modHelper";
+import vanillaItems from "./references/vanillaitems.json";
 
 class AutoCompatFramework implements IPostDBLoadMod 
 {
@@ -123,9 +124,9 @@ class AutoCompatFramework implements IPostDBLoadMod
             const allAttachments = allItems.filter(x => attachmentBaseClasses.some(base => itemHelper.isOfBaseclass(x._id, base)));
             const allAmmo = allItems.filter(x => itemHelper.isOfBaseclass(x._id, BaseClasses.AMMO));
 
-            const moddedWeapons = allWeapons.filter(x => !x._props?.Prefab?.path.startsWith("assets/content/"));
-            const moddedAttachments = allAttachments.filter(x => itemHelper.isOfBaseclass(x._id, BaseClasses.MOD) && !x._props?.Prefab?.path.startsWith("assets/content/"));
-            const moddedAmmo = allAmmo.filter(x => !x._props?.Prefab?.path.startsWith("assets/content/"));
+            const moddedWeapons = allWeapons.filter(x => !vanillaItems.WEAPON.includes(x._id) || !x._props?.Prefab?.path.startsWith("assets/content/"));
+            const moddedAttachments = allAttachments.filter(x => itemHelper.isOfBaseclass(x._id, BaseClasses.MOD) && (!vanillaItems.MOD.includes(x._id) || !x._props?.Prefab?.path.startsWith("assets/content/")));
+            const moddedAmmo = allAmmo.filter(x => !vanillaItems.AMMO.includes(x._id) || !x._props?.Prefab?.path.startsWith("assets/content/"));
 
             if (config.verboseLogging) 
             {
@@ -174,6 +175,24 @@ class AutoCompatFramework implements IPostDBLoadMod
                 {
                     if ((dbItem._name === name || dbItem._props?.Name === name) && dbItem._props?.Prefab?.path.startsWith("assets/content/")) 
                     {
+                        if (id === item._id) 
+                        {
+                            if (config.verboseLogging) 
+                            {
+                                logMessage("warning", `Name match for ${item._id} (${locales[`${item._id} Name`] || "Unknown"}) resolved to itself, falling back to JSON parsing`, true, config.verboseLogging);
+                            }
+                            if (config.modFileParsing && !cacheLoaded) 
+                            {
+                                const mods = preSptModLoader.getImportedModsNames().filter(mod => mod !== "AutoCompatFramework");
+                                const baseId = findBaseIdFromJson(item._id, mods, preSptModLoader, items, baseIdCache, config, logMessage);
+                                if (baseId && items[baseId]) 
+                                {
+                                    return baseId;
+                                }
+                            }
+                            logMessage("warning", `Modded item ${item._id} (${locales[`${item._id} Name`] || "Unknown"}): No base item found for clone mapping`, true, config.verboseLogging);
+                            return null;
+                        }
                         if (config.verboseLogging) 
                         {
                             logMessage("debug", `Found base item ${id} for ${item._id} via name match`, true, config.verboseLogging);
@@ -515,13 +534,13 @@ class AutoCompatFramework implements IPostDBLoadMod
             if (!config.verboseLogging) 
             {
                 logMessage("info", "AutoCompatFramework Summary:", false, config.verboseLogging);
-                logMessage("info", `Added ${numAmmoToChambers} ammo to chambers`, false, config.verboseLogging);
-                logMessage("info", `Added ${numAmmoToCartridges} ammo to cartridges`, false, config.verboseLogging);
-                logMessage("info", `Added ${numAttachmentsToSlots} attachments to slots`, false, config.verboseLogging);
-                logMessage("info", `Added ${numBaseConflictsAdded} base conflicts`, false, config.verboseLogging);
-                logMessage("info", `Added ${numClonedConflictsAdded} cloned conflicts`, false, config.verboseLogging);
-                logMessage("info", `Voided ${numConflictsVoided} conflicts`, false, config.verboseLogging);
-                logMessage("info", `Added ${numManualAdditions} manual additions`, false, config.verboseLogging);
+                logMessage("info", `- Added ${numAmmoToChambers} ammo to chambers`, false, config.verboseLogging);
+                logMessage("info", `- Added ${numAmmoToCartridges} ammo to cartridges`, false, config.verboseLogging);
+                logMessage("info", `- Added ${numAttachmentsToSlots} attachments to slots`, false, config.verboseLogging);
+                logMessage("info", `- Added ${numBaseConflictsAdded} base conflicts`, false, config.verboseLogging);
+                logMessage("info", `- Added ${numClonedConflictsAdded} cloned conflicts`, false, config.verboseLogging);
+                logMessage("info", `- Voided ${numConflictsVoided} conflicts`, false, config.verboseLogging);
+                logMessage("info", `- Added ${numManualAdditions} manual additions`, false, config.verboseLogging);
             }
 
             if (config.verboseLogging && 
