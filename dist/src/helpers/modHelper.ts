@@ -194,13 +194,11 @@ export const findBaseIdFromJson = (
                 let entry: any = null;
                 let source: string = "none";
 
-                // Try direct lookup for flat JSON structures
                 if (typeof data === "object" && data !== null && data[itemId]) 
                 {
                     entry = data[itemId];
                     source = "direct";
                 }
-                // Fall back to recursive search for nested JSON
                 else 
                 {
                     entry = findEntry(data);

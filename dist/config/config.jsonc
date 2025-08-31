@@ -66,7 +66,6 @@
     "66a47ed0df2ffbca58ebe5ed", // WTT IWI Tavor X95 front sight
     "66a47ed3f97061a20b99f188", // WTT IWI Tavor X95 rear sight
     "67a01e4ea2b82626b73d10a5", // WTT ACR PMAG 762
-    "686ea301341c74a9d8f5dfde", // Eukyre AK-50 Dust cover - cloned from a gas block XD
 
     "68448c3ea713d53905743800", // EoT AR-15 A1/A2 Gooseneck Carryhandle mount
     "66713838ca123f9df8e7584e", // EoT Precision Reflex Carry Handle Mount "Gooseneck"
@@ -82,6 +81,19 @@
     "8af8534244b4e4189d53bec2", // Epic's Magpul M-Lok bipod
     "690458c8c8f726648b11ac19", // Epic's Harris 1A2-BRM Bipod with picatinny mount
     "23878a19adddf4afbbcc0537", // Epic's Carry Handle Tactical Picatinny Riser mount
+
+    "6628f50c78434b5effe5ced1", // Raid Overhaul Multicaliber M4 (MCM4) Stuff
+    "6628f534d238d16e71d27601",
+    "6628f529b9886fa300b47de7",
+    "6628f52f246a7106c3c3dd22",
+    "6628f531ae7642ade7384366",
+    "6628f52b821b61722b245c10",
+    "6628f5244c3764ecf474f23c",
+    "6628f511ea0ab10dd0c5e2d4",
+    "6628f51c8df290deed8983e9",
+    "6628f51e54b4f59a7ade4ef9",
+    "6628f5191c445ab1b8b8cdf5",
+
 
     "04D04D10AB10AB4D00000000", // Massivesoft Longbow Rear Sight (why is this id so weird? It makes me uncomfortable...)
     

@@ -15,7 +15,7 @@ import { Item, Slot, ModConfig, PassResult } from "./references/types";
 import { normalizeCalibers } from "./helpers/choccyPatch";
 import { handleConflicts } from "./helpers/conflictHelper";
 import { loadCache, saveCache, findBaseIdFromJson } from "./helpers/modHelper";
-import vanillaItems from "./references/vanillaitems.json";
+import vanillaItems from "./references/vanillaItems.json"; //oopsie-fix for Linux case-sensitivity
 
 class AutoCompatFramework implements IPostDBLoadMod 
 {

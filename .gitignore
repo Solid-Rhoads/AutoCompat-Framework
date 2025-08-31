@@ -406,3 +406,4 @@ scripts/
 node_modules/
 dev/
 src/backups_and_rcs/
+dist/
